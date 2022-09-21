@@ -1,14 +1,16 @@
 from apps.models.Users import User
 from flask import Blueprint,request
-from exts import db
+from exts import db,po_email
 from flask_restful import Api, Resource
 from flask_restful.reqparse import RequestParser
 from exts.utils import success_api,fail_api,table_api,decoratr_white
-import hashlib,re
+import hashlib,re,time
 
 api_bp = Blueprint('api_bp',__name__,url_prefix='/v1/api')
 api = Api(api_bp)
 # api.representation('application/json')
+
+captcha_all = {}
 
 ##注册+修改密码
 class Register(Resource):
@@ -35,28 +37,36 @@ class Register(Resource):
         repassword = request.form.get('repassword')
         phone = request.form.get('phone')
         email = request.form.get('email')
-        print(username, password, repassword, phone, email)
+        captcha = request.form.get('captcha')
+        if  captcha==captcha_all['%s'%username]:
+            print('验证码正确。')
+            captcha_all.pop('%s'%username)
 
-        if re.match("^(?:(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9])).*$", username) == None:
-            return fail_api(code=203, message="用户名必须是大小写字母+数字，请检查！")
-        if re.match("^(?:(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9])).*$", password) == None:
-            return fail_api(code= 203, message="密码必须是大小写字母+数字，请检查！")
+            print(username, password, repassword, phone, email)
 
-        ###先看看有没有重复
-        alluser = User.query.all()
-        for role in alluser:
-            if str(username)==str(role):
-                return fail_api("已存在账户名")
+            if re.match("^(?:(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9])).*$", username) == None:
+                return fail_api(code=203, message="用户名必须是大小写字母+数字，请检查！")
+            if re.match("^(?:(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9])).*$", password) == None:
+                return fail_api(code= 203, message="密码必须是大小写字母+数字，请检查！")
 
-        if  password==repassword:
-            pwd = hashlib.sha1(password.encode('utf-8')).hexdigest()
-            #print('jiami',pwd)
-            user = User(username,pwd,phone,email)
-            db.session.add(user)
-            db.session.commit()
-            return success_api("注册成功")
+            ###先看看有没有重复
+            alluser = User.query.all()
+            for role in alluser:
+                if str(username)==str(role):
+                    return fail_api("已存在账户名")
+
+            if  password==repassword:
+                pwd = hashlib.sha1(password.encode('utf-8')).hexdigest()
+                user = User(username,pwd,phone,email)
+                db.session.add(user)
+                db.session.commit()
+                return success_api("注册成功")
+            else:
+                return fail_api("两次账号密码不一致")
         else:
-            return fail_api("两次账号密码不一致")
+            fail_api('验证码失效或者错误')
+
+
     def put(self):
         #修改密码
         username = request.form.get('username')
@@ -94,14 +104,16 @@ class Loginin(Resource):
         pwd = hashlib.sha1(password.encode('utf-8')).hexdigest()
         #查数据
         temp = User.query.filter(User.username==username).first()
-        print(temp.passward)
-        if pwd==temp.passward:
-            return success_api('登录成功')
+        try :
+            print(temp.passward)
+            if pwd==temp.passward:
+                return success_api('登录成功')
+        except Exception as e:
+            print(e)
+            return fail_api('账号或密码错误')
         return fail_api('账号或密码错误')
 
-
 ##白明单增删改查
-
 class TestDemo(Resource):
     method_decorators = [decoratr_white]
     def get(self):
@@ -156,9 +168,36 @@ class TestDemo(Resource):
         return success_api('删除成功')
 
 
+class Captcha(Resource):
+    def post(self):
+        ##获取到验证码
+        username = request.form.get('username')
+        email = request.form.get('email')
+        print(username, email)
+        cap = po_email.Email_captcha(email)
+        captcha_all['%s'%username] = cap
+        return success_api('邮件已发送')
+
+    def put(self):
+        # 找回密码
+        username = request.form.get('username')
+        captcha = request.form.get('captcha')
+        email = request.form.get('email')
+        newpassword = request.form.get('newpassword')
+        if  captcha==captcha_all['%s'%username]:
+            print('验证码正确。')
+            captcha_all.pop('%s'%username)
+            pwd = hashlib.sha1(newpassword.encode('utf-8')).hexdigest()
+            print('找回密码',username,newpassword)
+            User.query.filter(User.username == username).update({"passward": pwd})
+            db.session.commit()
+            return success_api('密码修改成功')
+        else:
+            return fail_api('验证码不正确或者已经失效')
 
 api.add_resource(Register,'/register')
 api.add_resource(Loginin,'/loginin')
 api.add_resource(TestDemo,'/testdemo')
+api.add_resource(Captcha,'/captcha')
 
 #ip = request.remote_addr
